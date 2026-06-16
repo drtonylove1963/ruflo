@@ -78,6 +78,8 @@ const commandLoaders: Record<string, CommandLoader> = {
   autopilot: () => import('./autopilot.js'),
   // GAIA Benchmark Harness (ADR-133)
   'gaia-bench': () => import('./gaia-bench.js'),
+  // MetaHarness integration (ADR-150) — dispatcher over plugins/ruflo-metaharness/
+  metaharness: () => import('./metaharness.js'),
 };
 
 // Cache for loaded commands

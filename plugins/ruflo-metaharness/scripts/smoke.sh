@@ -146,5 +146,29 @@ step "14. plugin.json parses as valid JSON + version sentinel matches step 1"
 node -e "JSON.parse(require('fs').readFileSync('$ROOT/.claude-plugin/plugin.json'))" 2>/dev/null \
   && ok || bad "plugin.json invalid JSON"
 
+step "15. top-level CLI command registered (deep integration — iter 3)"
+F="$ROOT/../../v3/@claude-flow/cli/src/commands/metaharness.ts"
+miss=""
+[[ -f "$F" ]] || miss="$miss command-file-missing"
+grep -q "name: 'metaharness'" "$F" 2>/dev/null || miss="$miss no-name-field"
+# The 5 subcommands must each be present in the dispatch table.
+# Match either quoted ('mcp-scan': ...) or unquoted shorthand (score: ...) keys.
+for sub in score genome mcp-scan threat-model mint; do
+  grep -qE "(^|[[:space:]])'?${sub}'?:" "$F" 2>/dev/null || miss="$miss missing-$sub"
+done
+# Registered in the loader
+LOADER="$ROOT/../../v3/@claude-flow/cli/src/commands/index.ts"
+grep -q "metaharness: () => import" "$LOADER" 2>/dev/null || miss="$miss not-registered-in-loader"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
+step "16. ruflo wrapper has metaharness in optionalDependencies (architectural constraint #2)"
+F="$ROOT/../../ruflo/package.json"
+node -e "
+const j = JSON.parse(require('fs').readFileSync('$F','utf-8'));
+const od = j.optionalDependencies || {};
+if (!od.metaharness) { console.error('missing metaharness in optionalDependencies'); process.exit(1); }
+if (j.dependencies && j.dependencies.metaharness) { console.error('metaharness leaked into dependencies'); process.exit(1); }
+" 2>/dev/null && ok || bad "ruflo wrapper missing metaharness optionalDep"
+
 printf "\n%s passed, %s failed\n" "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]] || exit 1

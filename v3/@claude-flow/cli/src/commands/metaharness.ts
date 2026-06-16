@@ -1,0 +1,154 @@
+/**
+ * V3 CLI MetaHarness Command — ADR-150 deep integration entry point.
+ *
+ * Top-level dispatcher that delegates each subcommand to the matching
+ * `plugins/ruflo-metaharness/scripts/<name>.mjs` via spawnSync. This is
+ * the user-facing wrapper around the upstream `metaharness` / `harness`
+ * CLIs.
+ *
+ * SUBCOMMANDS
+ *   score         — 5-dim readiness scorecard
+ *   genome        — 7-section categorical report
+ *   mcp-scan      — static MCP security findings
+ *   threat-model  — enterprise-grade threat model
+ *   mint          — scaffold custom harness (DRY-RUN by default)
+ *
+ * Each subcommand is a thin subprocess invocation — the plugin scripts
+ * own the actual logic. This command exists so users can run:
+ *
+ *   npx ruflo metaharness score
+ *   npx ruflo metaharness mcp-scan --fail-on high
+ *   npx ruflo metaharness mint --name foo --template vertical:coding
+ *
+ * instead of:
+ *
+ *   node plugins/ruflo-metaharness/scripts/score.mjs
+ *
+ * ADR-150 ARCHITECTURAL CONSTRAINT
+ * --------------------------------
+ * This command file MUST NOT statically import any `@metaharness/*`
+ * package. The plugin scripts handle all metaharness invocation;
+ * here we only spawn the local Node script (which then handles
+ * `npx metaharness` + graceful degradation).
+ *
+ * Created with ruv.io
+ */
+
+import type { Command, CommandContext, CommandResult } from '../types.js';
+import { output } from '../output.js';
+import { spawnSync } from 'child_process';
+import { existsSync } from 'fs';
+import { join, dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Subcommand → plugin script filename
+const SUBCOMMANDS: Record<string, string> = {
+  score: 'score.mjs',
+  genome: 'genome.mjs',
+  'mcp-scan': 'mcp-scan.mjs',
+  'threat-model': 'threat-model.mjs',
+  mint: 'mint.mjs',
+};
+
+/**
+ * Walk up from the current dirname to find the ruflo repo root that
+ * contains plugins/ruflo-metaharness/. Handles three install layouts:
+ *   1. ruflo dev tree   (cwd / ../plugins/...)
+ *   2. ruflo wrapper    (ruflo/node_modules/@claude-flow/cli/...)
+ *   3. npx              (npm-cache/__npx/... — fall back to cwd-scan)
+ */
+function locatePluginScripts(): string | null {
+  const candidates: string[] = [];
+  // Up from the cli dist dir
+  let p = resolve(__dirname);
+  for (let i = 0; i < 8; i++) {
+    candidates.push(join(p, 'plugins', 'ruflo-metaharness', 'scripts'));
+    candidates.push(join(p, '..', 'plugins', 'ruflo-metaharness', 'scripts'));
+    p = dirname(p);
+  }
+  // Also try from cwd (covers the "npx ruflo" case where the user is
+  // sitting in their own repo and `npx ruflo metaharness score` should
+  // score THAT repo using the LOCAL plugin if present).
+  const cwd = process.cwd();
+  candidates.push(join(cwd, 'plugins', 'ruflo-metaharness', 'scripts'));
+  candidates.push(join(cwd, 'node_modules', '@claude-flow', 'cli', 'plugins', 'ruflo-metaharness', 'scripts'));
+
+  for (const c of candidates) {
+    if (existsSync(join(c, '_harness.mjs'))) return c;
+  }
+  return null;
+}
+
+function dispatchPluginScript(scriptDir: string, scriptName: string, extraArgs: string[]): CommandResult {
+  const scriptPath = join(scriptDir, scriptName);
+  const r = spawnSync('node', [scriptPath, ...extraArgs], {
+    stdio: 'inherit',
+    env: process.env,
+    timeout: 5 * 60 * 1000,
+  });
+  return {
+    success: (r.status ?? 0) === 0,
+    exitCode: r.status ?? 1,
+    data: { scriptPath, args: extraArgs },
+  };
+}
+
+export const metaharnessCommand: Command = {
+  name: 'metaharness',
+  description:
+    'MetaHarness integration (ADR-150) — score / genome / mcp-scan / threat-model / mint. Subprocess-invoked plugin skills with graceful degradation.',
+  options: [
+    {
+      name: 'subcommand',
+      description: 'One of: score | genome | mcp-scan | threat-model | mint',
+      type: 'string' as const,
+    },
+  ],
+  async action(context: CommandContext): Promise<CommandResult> {
+    const args = (context as { args?: string[] }).args || [];
+    const subcommand = args[0];
+    const subArgs = args.slice(1);
+
+    if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+      output.writeln(output.bold('npx ruflo metaharness <subcommand> [options]'));
+      output.writeln('');
+      output.writeln('Subcommands:');
+      output.writeln('  score         5-dimension harness readiness scorecard');
+      output.writeln('  genome        7-section categorical readiness report');
+      output.writeln('  mcp-scan      static security scan of declared MCP surface');
+      output.writeln('  threat-model  enterprise-grade threat model');
+      output.writeln('  mint          scaffold a custom harness (dry-run by default)');
+      output.writeln('');
+      output.writeln('Each subcommand accepts --format json|table and --help.');
+      output.writeln('');
+      output.writeln(output.dim('ADR-150 — runs as subprocess; graceful degradation if metaharness is not installed.'));
+      return { success: true, exitCode: 0, data: { subcommand: null } };
+    }
+
+    if (!SUBCOMMANDS[subcommand]) {
+      output.writeln(output.error(`Unknown subcommand: ${subcommand}`));
+      output.writeln(`Valid: ${Object.keys(SUBCOMMANDS).join(', ')}`);
+      return { success: false, exitCode: 2, data: { subcommand } };
+    }
+
+    const scriptDir = locatePluginScripts();
+    if (!scriptDir) {
+      output.writeln(
+        output.warning(
+          'metaharness: plugins/ruflo-metaharness/scripts/ not found. Install ruflo with `npm i ruflo` or run from the ruflo repo.'
+        )
+      );
+      output.writeln(
+        output.dim('(ADR-150 graceful degradation: this command is a thin delegator over the plugin; the plugin must be present.)')
+      );
+      // Exit 0 — this is "feature not available", not a runtime failure.
+      return { success: true, exitCode: 0, data: { degraded: true, reason: 'plugin-not-found' } };
+    }
+
+    return dispatchPluginScript(scriptDir, SUBCOMMANDS[subcommand], subArgs);
+  },
+};
+
+export default metaharnessCommand;
