@@ -191,6 +191,19 @@ grep -q "execCli(\[\s*'-y'\s*,\s*'metaharness@latest'" "$F" 2>/dev/null || \
 grep -q "cwd: opts" "$F" || miss="$miss no-cwd-passthrough"
 [[ -z "$miss" ]] && ok || bad "$miss"
 
+step "17z20. iter-55 gaps B + C closed (iter 57)"
+miss=""
+# Gap B: _harness.mjs regex catches ENOTFOUND-class network errors
+HARNESS="$ROOT/scripts/_harness.mjs"
+grep -q "ENOTFOUND" "$HARNESS" 2>/dev/null || miss="$miss no-enotfound-regex"
+grep -q "getaddrinfo\|ECONNREFUSED\|ETIMEDOUT" "$HARNESS" 2>/dev/null || miss="$miss no-network-error-regex"
+# Gap C: drift-from-history probes oia-audit to disambiguate no-history vs dep-absent
+DRIFT="$ROOT/scripts/drift-from-history.mjs"
+grep -q "disambiguate" "$DRIFT" 2>/dev/null || miss="$miss no-disambiguate-comment"
+grep -q "probe.json?.degraded === true" "$DRIFT" 2>/dev/null || miss="$miss no-probe-degraded-check"
+grep -q "emitAndExit.*degraded: true" "$DRIFT" 2>/dev/null || miss="$miss no-degraded-exit-3"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
 step "17z19. oia-audit parallelizes 5 subprocesses (iter 56 — closes iter-55 gap A)"
 miss=""
 HARNESS="$ROOT/scripts/_harness.mjs"

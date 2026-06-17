@@ -55,7 +55,7 @@ function execCliAsync(npxArgs, opts = {}) {
     p.on('close', (code) => {
       clearTimeout(timer);
       const durationMs = Date.now() - start;
-      if (code === null || /could not determine executable|404|not installed|MODULE_NOT_FOUND/i.test(stderr)) {
+      if (code === null || /could not determine executable|404|not installed|MODULE_NOT_FOUND|ENOTFOUND|getaddrinfo|ECONNREFUSED|ETIMEDOUT/i.test(stderr)) {
         resolve({
           stdout, stderr,
           exitCode: code ?? 127, json: null, durationMs,
@@ -107,7 +107,7 @@ function execCli(npxArgs, opts = {}) {
   const stdout = r.stdout || '';
   const stderr = r.stderr || '';
   // Graceful degradation — npx couldn't find the binary.
-  if (r.status === null || /could not determine executable|404|not installed|MODULE_NOT_FOUND/i.test(stderr)) {
+  if (r.status === null || /could not determine executable|404|not installed|MODULE_NOT_FOUND|ENOTFOUND|getaddrinfo|ECONNREFUSED|ETIMEDOUT/i.test(stderr)) {
     return {
       stdout, stderr,
       exitCode: r.status ?? 127,
@@ -150,7 +150,7 @@ export function runHarness(args, opts) {
   const durationMs = Date.now() - start;
   const stdout = r.stdout || '';
   const stderr = r.stderr || '';
-  if (r.status === null || /could not determine executable|404|not installed|MODULE_NOT_FOUND/i.test(stderr)) {
+  if (r.status === null || /could not determine executable|404|not installed|MODULE_NOT_FOUND|ENOTFOUND|getaddrinfo|ECONNREFUSED|ETIMEDOUT/i.test(stderr)) {
     return {
       stdout, stderr,
       exitCode: r.status ?? 127,

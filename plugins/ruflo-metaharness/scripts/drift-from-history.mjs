@@ -113,6 +113,17 @@ async function main() {
   }
   const records = listResult.json?.records ?? listResult.json?.entries ?? [];
   if (records.length === 0) {
+    // iter 57 — disambiguate "no history yet" (exit 2) from
+    // "metaharness absent" (exit 3). Probe with a quick --dry-run
+    // oia-audit: if it reports degraded, this is the dep-absent case.
+    const probe = runScriptJson('oia-audit.mjs', ['--dry-run', '--path', ARGS.path]);
+    if (probe.json?.degraded === true) {
+      emitAndExit({
+        degraded: true,
+        reason: probe.json.reason || 'metaharness-not-available',
+        hint: 'Install metaharness to enable drift detection.',
+      }, 3);
+    }
     emitAndExit({
       error: 'no audit records found in namespace ' + NS,
       hint: 'Run `ruflo metaharness oia-audit` at least once to seed history.',
