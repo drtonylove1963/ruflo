@@ -191,6 +191,32 @@ grep -q "execCli(\[\s*'-y'\s*,\s*'metaharness@latest'" "$F" 2>/dev/null || \
 grep -q "cwd: opts" "$F" || miss="$miss no-cwd-passthrough"
 [[ -z "$miss" ]] && ok || bad "$miss"
 
+step "17z37. ADR-150 architectural-constraint negative guards (iter 74)"
+miss=""
+# Guard 1 — ADR-150 §Sandboxing: `harness from-repo` must never be wrapped
+# as a ruflo skill or MCP tool. It clones arbitrary git URLs which is too
+# powerful to expose to agents. (Upstream supports it; ruflo deliberately
+# does not.) Negative greps across all the wrapping surfaces:
+SKILLS_DIR="$ROOT/skills"
+! find "$SKILLS_DIR" -name SKILL.md -exec grep -l "from-repo" {} \; 2>/dev/null | grep -q . || miss="$miss from-repo-leaked-to-skill"
+SCRIPTS_DIR="$ROOT/scripts"
+! grep -rE "^[^/]*runHarness\(\['from-repo'" "$SCRIPTS_DIR" 2>/dev/null | grep -q . || miss="$miss from-repo-leaked-to-script"
+WRAPPER="$ROOT/../../v3/@claude-flow/cli/src/mcp-tools/metaharness-tools.ts"
+! grep -q "name: 'metaharness_from_repo'" "$WRAPPER" 2>/dev/null || miss="$miss from-repo-leaked-to-mcp"
+
+# Guard 2 — ADR-150 architectural constraint #1: the ONE exception is
+# neural-router.ts using a dynamic-import of @metaharness/router. Any OTHER
+# static import of @metaharness/* breaks the "ruflo works without the dep"
+# rule. Scan the CLI source tree for stray static imports.
+CLI_SRC="$ROOT/../../v3/@claude-flow/cli/src"
+STATIC_IMPORTS=$(grep -rE "^import .* from '@metaharness/" "$CLI_SRC" 2>/dev/null | grep -v "neural-router.ts" | grep -v "// allowed:" | wc -l | tr -d ' ')
+[[ "$STATIC_IMPORTS" == "0" ]] || miss="$miss static-import-leak:$STATIC_IMPORTS-outside-neural-router"
+
+# Guard 3 — confirmation that iter-73's mint guard is still in place
+! grep -q "name: 'metaharness_mint'" "$WRAPPER" 2>/dev/null || miss="$miss mint-leaked-to-mcp"
+
+[[ -z "$miss" ]] && ok || bad "$miss"
+
 step "17z36. CLI subcommand list current + mint anti-MCP guard (iter 73)"
 miss=""
 DISP="$ROOT/../../v3/@claude-flow/cli/src/commands/metaharness.ts"
